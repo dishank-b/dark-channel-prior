@@ -1,5 +1,8 @@
 import numpy as np
 import cv2
+from itertools import combinations_with_replacement
+from collections import defaultdict
+from numpy.linalg import inv
 
 '''
 J : haze free image
@@ -8,11 +11,14 @@ t : 0 for haze free image and 1 for maximum hazy image
 '''
 
 class Dehazer:
-	def __init__(self,img,omega=0.95,t0=0.1,w=5,threshold_percentage=0.001,show_intermediate=False):
+	def __init__(self,img,omega=0.95,t0=0.1,w=5,w_refine=40,epsilon=1e-2,refine=True,threshold_percentage=0.001,show_intermediate=False):
 		self.image = img # Corresponds to I in the paper
 		self.omega = omega
 		self.t0 = t0
 		self.w = w
+		self.w_refine = w_refine
+		self.epsilon = epsilon
+		self.refine = refine
 		self.show_intermediate = show_intermediate
 		self.threshold_percentage = threshold_percentage
 
@@ -110,32 +116,90 @@ class Dehazer:
 			cv2.imshow('Transmission Map',self.transmission_map)
 			cv2.waitKey(0)
 
+	def mean_filter(self,I, w):
+		kernel = np.ones((w,w),np.float32)/(1.0*w*w)
+		return cv2.filter2D(I,-1,kernel)
+
+	def guided_filter(self,I, p):
+	    """Refine a filter under the guidance of another (RGB) image.
+	    Parameters
+	    -----------
+	    I:   an M * N * 3 RGB image for guidance.
+	    p:   the M * N filter to be guided
+	    r:   the radius of the guidance
+	    eps: epsilon for the guided filter
+	    Return
+	    -----------
+	    The guided filter.
+	    """
+	    R,G,B = 0, 1, 2
+	    w = self.w_refine
+	    eps = self.epsilon
+
+	    p = p.reshape(p.shape[0],p.shape[1])
+	    M, N = self.image.shape[0],self.image.shape[1]
+	    base = self.mean_filter(np.ones((M, N)), w)
+
+	    # each channel of I filtered with the mean filter
+	    means = [self.mean_filter(I[:, :, i], w) / base for i in range(3)]
+	    # p filtered with the mean filter
+	    mean_p = self.mean_filter(p, w) / base
+	    # filter I with p then filter it with the mean filter
+	    means_IP = [self.mean_filter(I[:, :, i] * p, w) / base for i in range(3)]
+	    # covariance of (I, p) in each local patch
+	    covIP = [means_IP[i] - means[i] * mean_p for i in range(3)]
+
+	    # variance of I in each local patch: the matrix Sigma in eq.14
+	    var = defaultdict(dict)
+	    for i, j in combinations_with_replacement(range(3), 2):
+	        var[i][j] = self.mean_filter(
+	            I[:, :, i] * I[:, :, j], w) / base - means[i] * means[j]
+
+	    a = np.zeros((M, N, 3))
+	    for y, x in np.ndindex(M, N):
+	        #         rr, rg, rb
+	        # Sigma = rg, gg, gb
+	        #         rb, gb, bb
+	        Sigma = np.array([[var[R][R][y, x], var[R][G][y, x], var[R][B][y, x]],
+	                          [var[R][G][y, x], var[G][G][y, x], var[G][B][y, x]],
+	                          [var[R][B][y, x], var[G][B][y, x], var[B][B][y, x]]])
+	        cov = np.array([c[y, x] for c in covIP])
+	        a[y, x] = np.dot(cov, inv(Sigma + eps * np.eye(3)))  # eq 14
+	    
+	    b = mean_p - a[:, :, R] * means[R] - a[:, :, G] * means[G] - a[:, :, B] * means[B]
+
+	    q = (self.mean_filter(a[:, :, R], w) * I[:, :, R] + self.mean_filter(a[:, :, G], w) *
+	         I[:, :, G] + self.mean_filter(a[:, :, B], w) * I[:, :, B] + self.mean_filter(b, w)) / base
+
+	    self.refined_transmission_map = q.reshape(q.shape[0],q.shape[1],1)
+
 	def refine_transmission_map(self):
-		gray = self.image.min(axis=2) #.reshape(self.image.shape[0],self.image.shape[1],1)
-		print(gray.shape)
-		self.get_transmission_map()
-		t = (self.transmission_map*255.0).astype(np.uint8)
-		self.refined_transmission_map = cv2.ximgproc.guidedFilter(gray,self.transmission_map, 40, 1e-2)
+		normalized_image = (self.image - self.image.min())/(self.image.max() - self.image.min())
+		self.guided_filter(normalized_image,self.transmission_map)
+
+		if self.show_intermediate is True:
+			print(self.refined_transmission_map)
+			cv2.imshow('Refined Transmission Map',self.refined_transmission_map)
+			cv2.waitKey(0)
 
 	def dehaze(self):
-		self.refine_transmission_map()
+		self.get_transmission_map()
+
+		if self.refine is True:
+			self.refine_transmission_map()
 
 		# Normalizing I and A
 		self.image = (self.image - np.min(self.image))/(np.max(self.image) - np.min(self.image))
 		self.A/=255.0
 
-		self.J = (self.image - self.A)/(np.maximum(self.transmission_map,self.t0)) + self.A
+		if self.refine is True:
+			self.J = (self.image - self.A)/(np.maximum(self.refined_transmission_map,self.t0)) + self.A
+		else:
+			self.J = (self.image - self.A)/(np.maximum(self.transmission_map,self.t0)) + self.A
 
 		if self.show_intermediate is True:
 			print(self.J)
 			cv2.imshow('Dehazed Image',self.J)
 			cv2.waitKey(0)
 
-		return self.J
-
-def main():
-	dehazer = Dehazer(cv2.imread('test.jpeg',1),w=3,show_intermediate=False)
-	dehazed = dehazer.dehaze()
-	cv2.imshow('Dehazed Image',dehazed)
-	cv2.waitKey(0)
-main()
+		return self.J*255.0
