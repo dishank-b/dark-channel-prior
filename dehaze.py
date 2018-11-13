@@ -36,9 +36,9 @@ class Dehazer:
 				block = padded_image[i-int(w/2):i+int(w/2)+1,j-int(w/2):j+int(w/2)+1,:]
 				self.dark_channel[i-int(w/2),j-int(w/2),0] = np.min(block)
 
-		if self.show_intermediate is True:
-			cv2.imshow('Dark Channel Image',self.dark_channel)
-			cv2.waitKey(0)
+		# if self.show_intermediate is True:
+		# 	cv2.imshow('Dark Channel Image',self.dark_channel)
+		# 	cv2.waitKey(0)
 
 	def get_A(self):
 		'''
@@ -153,22 +153,32 @@ class Dehazer:
 
 	    p = p.reshape(p.shape[0],p.shape[1])
 	    M, N = self.image.shape[0],self.image.shape[1]
-	    base = self.mean_filter(np.ones((M, N)), w)
+	    # base = self.mean_filter(np.ones((M, N)), w)
+
+	    # print('Base : {}'.format(base))
+	    # means = [self.mean_filter(I[:, :, i], w) / base for i in range(3)]
+	    # print(means)
 
 	    # each channel of I filtered with the mean filter
-	    means = [self.mean_filter(I[:, :, i], w) / base for i in range(3)]
+	    means = [self.mean_filter(I[:, :, i], w) for i in range(3)] # mu_k
+	    # print(means)
+
 	    # p filtered with the mean filter
-	    mean_p = self.mean_filter(p, w) / base
+	    mean_p = self.mean_filter(p, w) # p_k_bar
 	    # filter I with p then filter it with the mean filter
-	    means_IP = [self.mean_filter(I[:, :, i] * p, w) / base for i in range(3)]
+	    means_IP = [self.mean_filter(I[:, :, i] * p, w) for i in range(3)] # First term in second bracket of equation 14
 	    # covariance of (I, p) in each local patch
-	    covIP = [means_IP[i] - means[i] * mean_p for i in range(3)]
+	    covIP = [means_IP[i] - means[i] * mean_p for i in range(3)] # Second term in equation 14
+
+	    '''
+	    Equation 14 describes an image as the second term...the summation is nothing but a mean filter applied to every pixel
+	    '''
 
 	    # variance of I in each local patch: the matrix Sigma in eq.14
 	    var = defaultdict(dict)
 	    for i, j in combinations_with_replacement(range(3), 2):
 	        var[i][j] = self.mean_filter(
-	            I[:, :, i] * I[:, :, j], w) / base - means[i] * means[j]
+	            I[:, :, i] * I[:, :, j], w) - means[i] * means[j] # Matrix Sigma terms for each pixel
 
 	    a = np.zeros((M, N, 3))
 	    for y, x in np.ndindex(M, N):
@@ -181,10 +191,10 @@ class Dehazer:
 	        cov = np.array([c[y, x] for c in covIP])
 	        a[y, x] = np.dot(cov, inv(Sigma + eps * np.eye(3)))  # eq 14
 	    
-	    b = mean_p - a[:, :, R] * means[R] - a[:, :, G] * means[G] - a[:, :, B] * means[B]
+	    b = mean_p - a[:, :, R] * means[R] - a[:, :, G] * means[G] - a[:, :, B] * means[B] # Equation 15
 
 	    q = (self.mean_filter(a[:, :, R], w) * I[:, :, R] + self.mean_filter(a[:, :, G], w) *
-	         I[:, :, G] + self.mean_filter(a[:, :, B], w) * I[:, :, B] + self.mean_filter(b, w)) / base
+	         I[:, :, G] + self.mean_filter(a[:, :, B], w) * I[:, :, B] + self.mean_filter(b, w)) # Equations 7,8,16
 
 	    self.refined_transmission_map = q.reshape(q.shape[0],q.shape[1],1)
 

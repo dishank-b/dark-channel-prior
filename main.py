@@ -22,10 +22,10 @@ def main():
 			if extension in path: #Means a single image is given as the argument
 				is_single_image = True
 				try:
-					dehazer = Dehazer(cv2.imread(path,1),w=3,show_intermediate=False)
+					dehazer = Dehazer(cv2.imread(path,1),w=3,show_intermediate=True)
 				except:
 					print('Error Reading The Image From The Path')
-				
+
 				dehazed = dehazer.dehaze() #Get the dehazed image
 				
 				if not os.path.exists('Single_Image_Output/'):
