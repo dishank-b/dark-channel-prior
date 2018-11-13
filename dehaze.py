@@ -56,19 +56,34 @@ class Dehazer:
 
 		assert sum(frequencies) == self.image.shape[0]*self.image.shape[1]
 		
+		# print('Frequencies : {}'.format(frequencies))
+
 		# Find the top 1% brightest pixels in the dark channel image
 		threshold = self.threshold_percentage*sum(frequencies)
+		# print('Threshold : {}'.format(threshold))
+
 		rev_freq = np.flip(frequencies,axis=0)
 		cum_sum = np.cumsum(rev_freq)
 		index = np.array(np.where(cum_sum <= threshold)).reshape(-1) # Stores the gray values which are in the top threshold percentage
 
 		top_gray_values = []
-		# Seperate gray values not present in the dark channel image
-		for i in index:
+		sum_so_far = 0
+
+		for i in range(len(cum_sum)):
 			if rev_freq[i] == 0:
 				continue
+			sum_so_far+=rev_freq[i]
 			top_gray_values.append(255 - i)
+			if sum_so_far > threshold:
+				break
+
+		# # Seperate gray values not present in the dark channel image
+		# for i in index:
+		# 	if rev_freq[i] == 0:
+		# 		continue
+		# 	top_gray_values.append(255 - i)
 		
+		# print('Top Gray Values : {}'.format(top_gray_values))
 		A = np.zeros((1,3))
 
 		max_in_b = max_in_g = max_in_r = -1.0*float('inf')
